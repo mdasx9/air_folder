@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+
+# Database
+*.db
+
+# Data exports
+*.csv
+
+# Secrets
+.env
+
+# IDE
+.vscode/

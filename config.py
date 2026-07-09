@@ -1,0 +1,38 @@
+from pathlib import Path
+
+#project paths
+
+PROJECT_ROOT = Path(__file__).parent
+
+DATABASE_PATH = PROJECT_ROOT / "air_quality.db"
+
+#dashboard
+
+REFRESH_SECONDS = 30
+
+OFFLINE_THRESHOLD_SECONDS = 60
+
+#metrics
+
+METRICS = {
+    "PM1": "pm1",
+    "PM2.5": "pm25",
+    "PM4": "pm4",
+    "PM10": "pm10",
+    "VOC Index": "voc",
+    "NOx Index": "nox",
+    "CO₂": "co2",
+    "Temperature": "temperature",
+    "Humidity": "humidity"
+}
+
+#time range
+
+TIME_RANGES = {
+    "Last Hour": 1,
+    "Last 6 Hours": 6,
+    "Last 24 Hours": 24,
+    "Last 7 Days": 24 * 7,
+    "Last 30 Days": 24 * 30,
+    "All Data": None
+}
