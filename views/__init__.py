@@ -1,3 +1,4 @@
+from .event_logging import render as render_event_logging
 from .live_monitor import render as render_live_monitor
 from .historical_analysis import render as render_historical_analysis
 from .room_comparison import render as render_room_comparison

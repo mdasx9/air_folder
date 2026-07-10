@@ -5,6 +5,7 @@ from database import count_measurements, get_nodes, latest_timestamp
 from views import (
     render_data_manager,
     render_event_analysis,
+    render_event_logging,
     render_historical_analysis,
     render_live_monitor,
     render_room_comparison,
@@ -20,6 +21,7 @@ st.set_page_config(
 
 PAGES = {
     "Live Monitor": render_live_monitor,
+    "Event Logging": render_event_logging,
     "Historical Analysis": render_historical_analysis,
     "Room Comparison": render_room_comparison,
     "Event Analysis": render_event_analysis,

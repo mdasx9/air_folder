@@ -1,8 +1,11 @@
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
 from config import METRICS, ROOMS, TIME_RANGES
-from views.common import load_filtered_data, metric_labels, read_selected_columns, room_list
+from dataset import build_labeled_dataset
+from views.common import default_date_window, load_filtered_data, metric_labels, read_selected_columns, room_list
 
 
 def render():
@@ -47,5 +50,61 @@ def render():
         "Download CSV",
         data=csv_bytes,
         file_name=file_name,
+        mime="text/csv",
+    )
+
+    st.divider()
+    _render_labeled_export()
+
+
+def _render_labeled_export():
+    st.subheader("Labeled ML dataset")
+    st.caption(
+        "Sensor readings from all rooms joined with logged events (source/transport role) "
+        "and as-of room states. Rows with no event are kept as the background class."
+    )
+
+    default_start, default_end = default_date_window(days=7)
+
+    controls = st.columns(3)
+    start_date = controls[0].date_input("Start date", value=default_start)
+    end_date = controls[1].date_input("End date", value=default_end)
+    buffer_minutes = controls[2].number_input(
+        "Buffer around events (minutes)",
+        min_value=0,
+        max_value=120,
+        value=10,
+    )
+
+    if st.button("Build labeled dataset"):
+        start_time = datetime.combine(start_date, datetime.min.time())
+        end_time = datetime.combine(end_date, datetime.max.time())
+        st.session_state["labeled_dataset"] = build_labeled_dataset(
+            start_time,
+            end_time,
+            buffer_minutes=buffer_minutes,
+        )
+
+    labeled = st.session_state.get("labeled_dataset")
+    if labeled is None:
+        return
+
+    if labeled.empty:
+        st.info("No sensor readings in the selected date range.")
+        return
+
+    event_rows = labeled["event_type"].notna()
+
+    summary = st.columns(3)
+    summary[0].metric("Rows", len(labeled))
+    summary[1].metric("Event-labeled rows", int(event_rows.sum()))
+    summary[2].metric("Background rows", int((~event_rows).sum()))
+
+    st.dataframe(labeled.head(200), use_container_width=True)
+
+    st.download_button(
+        "Download labeled CSV",
+        data=labeled.to_csv(index=False).encode("utf-8"),
+        file_name="labeled_dataset.csv",
         mime="text/csv",
     )

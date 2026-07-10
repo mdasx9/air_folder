@@ -12,6 +12,31 @@ ROOMS = [
     "Bedroom",
 ]
 
+#event / room-state labeling
+#
+#sensor_data.node stores display names ("Kitchen"); the events and
+#room_states tables store slugs ("kitchen"). This map is the single
+#source of truth for converting between the two.
+
+ROOM_SLUGS = {
+    "Kitchen": "kitchen",
+    "Living Room": "living_room",
+    "Bedroom": "bedroom",
+}
+
+EVENT_TYPES = [
+    "cooking",
+    "cleaning",
+    "candle",
+    "occupancy_change",
+]
+
+STATE_TYPES = {
+    "window": ["open", "closed"],
+    "exhaust_fan": ["on", "off"],
+    "purifier": ["on", "off"],
+}
+
 #dashboard
 
 REFRESH_SECONDS = 30
