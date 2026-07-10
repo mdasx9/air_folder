@@ -1,5 +1,4 @@
-import streamlit as st
+from views.live_monitor import render
 
-st.title("Live Monitor")
 
-st.success("Live Monitor page loaded successfully.")
+render()

@@ -16,62 +16,36 @@ def downsample(df):
     if df.empty:
         return df
 
-
     df = df.copy()
 
-    df["timestamp"] = pd.to_datetime(
-        df["timestamp"]
-    )
+    if "node" in df.columns and df["node"].nunique() > 1:
+        pieces = []
 
+        for node, node_df in df.groupby("node", sort=False):
+            sampled = downsample(node_df.drop(columns=["node"]))
+            sampled["node"] = node
+            pieces.append(sampled)
 
-    df = df.set_index(
-        "timestamp"
-    )
+        result = pd.concat(pieces, ignore_index=True)
+        return result.sort_values("timestamp").reset_index(drop=True)
 
-
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.set_index("timestamp")
     points = len(df)
 
-
-    # Small datasets:
-    # keep raw data
     if points < 10000:
-
-        return df.reset_index()
-
-
-
-    # Larger datasets:
-    # average into time bins
+        result = df.reset_index()
+        return result
 
     if points < 50000:
-
         interval = "1min"
-
-
     elif points < 200000:
-
         interval = "5min"
-
-
     else:
-
         interval = "15min"
 
-
-
-    numeric_columns = df.select_dtypes(
-        include="number"
-    ).columns
-
-
-    result = (
-        df[numeric_columns]
-        .resample(interval)
-        .mean()
-        .dropna()
-    )
-
-
+    numeric_columns = df.select_dtypes(include="number").columns
+    result = df[numeric_columns].resample(interval).mean().dropna()
     return result.reset_index()
 
 
@@ -197,3 +171,51 @@ def detect_events(
 
 
     return events
+
+
+def summarize_events(
+    df,
+    metric,
+    threshold,
+    gap_minutes=10
+):
+
+    if df.empty:
+        return pd.DataFrame()
+
+    events = detect_events(df, metric, threshold)
+
+    if events.empty:
+        return pd.DataFrame()
+
+    events = events.copy()
+    events["timestamp"] = pd.to_datetime(events["timestamp"])
+    events = events.sort_values("timestamp")
+
+    event_breaks = (
+        events["timestamp"]
+        .diff()
+        .gt(pd.Timedelta(minutes=gap_minutes))
+        .cumsum()
+    )
+
+    summary = (
+        events.groupby(event_breaks)
+        .agg(
+            start_time=("timestamp", "min"),
+            end_time=("timestamp", "max"),
+            peak_value=(metric, "max"),
+            mean_value=(metric, "mean"),
+            num_points=("timestamp", "size")
+        )
+        .reset_index(drop=True)
+    )
+
+    summary["duration_minutes"] = (
+        summary["end_time"] - summary["start_time"]
+    ).dt.total_seconds() / 60.0
+
+    if "node" in events.columns:
+        summary["node"] = events["node"].iloc[0]
+
+    return summary

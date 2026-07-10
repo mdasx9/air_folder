@@ -6,6 +6,12 @@ PROJECT_ROOT = Path(__file__).parent
 
 DATABASE_PATH = PROJECT_ROOT / "air_quality.db"
 
+ROOMS = [
+    "Kitchen",
+    "Living Room",
+    "Bedroom",
+]
+
 #dashboard
 
 REFRESH_SECONDS = 30
@@ -21,7 +27,7 @@ METRICS = {
     "PM10": "pm10",
     "VOC Index": "voc",
     "NOx Index": "nox",
-    "CO₂": "co2",
+    "CO2": "co2",
     "Temperature": "temperature",
     "Humidity": "humidity"
 }
