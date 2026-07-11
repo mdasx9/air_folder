@@ -48,7 +48,7 @@ ON events (start_time);
 CREATE TABLE IF NOT EXISTS room_states (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room TEXT NOT NULL CHECK (room IN ('kitchen', 'living_room', 'bedroom')),
-    state_type TEXT NOT NULL CHECK (state_type IN ('window', 'exhaust_fan', 'purifier')),
+    state_type TEXT NOT NULL CHECK (state_type IN ('window', 'exhaust_fan', 'purifier', 'ac')),
     state_value TEXT NOT NULL CHECK (state_value IN ('open', 'closed', 'on', 'off')),
     changed_at TEXT NOT NULL
 );

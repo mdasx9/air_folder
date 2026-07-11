@@ -133,6 +133,13 @@ class RoomStateTests(LabelsTestCase):
         with self.assertRaises(ValueError):
             labels.set_room_state("kitchen", "window", "on", db_path=self.db)
 
+    def test_ac_state_is_accepted(self):
+        self.assertTrue(labels.set_room_state("bedroom", "ac", "on", db_path=self.db))
+        self.assertEqual(
+            labels.state_as_of("bedroom", "ac", "2099-01-01 00:00:00", db_path=self.db),
+            "on",
+        )
+
 
 class StateAsOfTests(LabelsTestCase):
 

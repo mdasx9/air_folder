@@ -13,6 +13,7 @@ STATE_TOGGLES = {
     "window": ("Window open", "open", "closed"),
     "exhaust_fan": ("Exhaust fan on", "on", "off"),
     "purifier": ("Purifier on", "on", "off"),
+    "ac": ("AC on", "on", "off"),
 }
 
 

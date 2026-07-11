@@ -35,6 +35,7 @@ STATE_TYPES = {
     "window": ["open", "closed"],
     "exhaust_fan": ["on", "off"],
     "purifier": ["on", "off"],
+    "ac": ["on", "off"],
 }
 
 #dashboard
