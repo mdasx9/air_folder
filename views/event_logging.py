@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 
 import labels
-from config import EVENT_TYPES, ROOM_SLUGS, STATE_TYPES
+from config import EVENT_TYPES, MAX_BACKDATE_HOURS, ROOM_SLUGS, STATE_TYPES
 from views.common import format_timestamp
 
 
@@ -78,9 +78,24 @@ def _render_log_event(open_df):
     subtype = controls[2].text_input("Subtype (optional)", placeholder="stovetop, vacuum, person_entered...")
     notes = controls[3].text_input("Notes (optional)")
 
-    if st.button("Start event", type="primary"):
+    start_columns = st.columns([1, 3])
+    started_minutes_ago = start_columns[0].number_input(
+        "Started (min ago)",
+        min_value=0,
+        max_value=MAX_BACKDATE_HOURS * 60,
+        value=0,
+        help="Leave at 0 for something starting right now; set it if you noticed late.",
+    )
+
+    if start_columns[1].button("Start event", type="primary"):
         try:
-            labels.start_event(ROOM_SLUGS[room_label], event_type, subtype, notes)
+            labels.start_event(
+                ROOM_SLUGS[room_label],
+                event_type,
+                subtype,
+                notes,
+                started_minutes_ago=started_minutes_ago,
+            )
             st.rerun()
         except labels.DuplicateOpenEventError as err:
             st.error(str(err))
@@ -89,21 +104,78 @@ def _render_log_event(open_df):
 
     if open_df.empty:
         st.caption("No open events. Start one above when something happens.")
-        return
+    else:
+        for event in open_df.itertuples(index=False):
+            description, elapsed, ended_ago, action = st.columns([4, 1, 1, 1])
 
-    for event in open_df.itertuples(index=False):
-        description, elapsed, action = st.columns([4, 1, 1])
+            subtype_text = f" ({event.subtype})" if event.subtype else ""
+            description.write(
+                f"**{event.event_type}**{subtype_text} in {SLUG_TO_ROOM.get(event.room, event.room)} "
+                f"— started {format_timestamp(event.start_time)}"
+            )
+            elapsed.write(_elapsed_text(event.start_time))
 
-        subtype_text = f" ({event.subtype})" if event.subtype else ""
-        description.write(
-            f"**{event.event_type}**{subtype_text} in {SLUG_TO_ROOM.get(event.room, event.room)} "
-            f"— started {format_timestamp(event.start_time)}"
+            ended_minutes_ago = ended_ago.number_input(
+                "Ended (min ago)",
+                min_value=0,
+                max_value=MAX_BACKDATE_HOURS * 60,
+                value=0,
+                key=f"ended_ago_{event.id}",
+            )
+
+            if action.button("Stop", key=f"stop_event_{event.id}"):
+                try:
+                    labels.stop_event(event.id, ended_minutes_ago=ended_minutes_ago)
+                    st.rerun()
+                except ValueError as err:
+                    st.error(str(err))
+
+    _render_past_event_form()
+
+
+def _render_past_event_form():
+
+    with st.expander("Log a completed past event (forgot to log it live?)", expanded=False):
+        st.caption(
+            f"For events that already ended. Backdating is capped at {MAX_BACKDATE_HOURS} hours — "
+            "if you can't remember roughly when it happened, leave it unlogged rather than guessing."
         )
-        elapsed.write(_elapsed_text(event.start_time))
 
-        if action.button("Stop", key=f"stop_event_{event.id}"):
-            labels.stop_event(event.id)
-            st.rerun()
+        controls = st.columns(4)
+        room_label = controls[0].selectbox("Source room", list(ROOM_SLUGS.keys()), key="past_room")
+        event_type = controls[1].selectbox("Event type", EVENT_TYPES, key="past_type")
+        subtype = controls[2].text_input("Subtype (optional)", key="past_subtype")
+        notes = controls[3].text_input("Notes (optional)", key="past_notes")
+
+        timing = st.columns([1, 1, 2])
+        started_minutes_ago = timing[0].number_input(
+            "Started (min ago)",
+            min_value=1,
+            max_value=MAX_BACKDATE_HOURS * 60,
+            value=30,
+            key="past_started",
+        )
+        duration_minutes = timing[1].number_input(
+            "Duration (min)",
+            min_value=1,
+            max_value=MAX_BACKDATE_HOURS * 60,
+            value=15,
+            key="past_duration",
+        )
+
+        if timing[2].button("Log past event"):
+            try:
+                labels.log_past_event(
+                    ROOM_SLUGS[room_label],
+                    event_type,
+                    started_minutes_ago,
+                    duration_minutes,
+                    subtype=subtype,
+                    notes=notes,
+                )
+                st.success("Past event recorded — it will show under Recent events below.")
+            except ValueError as err:
+                st.error(str(err))
 
 
 
@@ -156,6 +228,53 @@ def _render_room_states(state_lookup):
                 is_on = st.session_state.get(f"state_{slug}_{state_type}", False)
                 labels.set_room_state(slug, state_type, on_value if is_on else off_value)
             st.rerun()
+
+    _render_backdated_state_form()
+
+
+def _render_backdated_state_form():
+
+    with st.expander("Backdate a state change (changed earlier, logged late?)", expanded=False):
+        st.caption(
+            "For a change that really happened a while ago — e.g. a window opened an hour "
+            "ago but nobody toggled it. The correction slots into history at the time you "
+            "give, so past exports come out right."
+        )
+
+        controls = st.columns([1, 1, 1, 1, 1])
+        room_label = controls[0].selectbox("Room", list(ROOM_SLUGS.keys()), key="backdate_room")
+        state_type = controls[1].selectbox(
+            "State",
+            list(STATE_TOGGLES.keys()),
+            format_func=lambda s: STATE_TOGGLES[s][0],
+            key="backdate_state",
+        )
+        state_value = controls[2].selectbox("Became", STATE_TYPES[state_type], key="backdate_value")
+        changed_minutes_ago = controls[3].number_input(
+            "Changed (min ago)",
+            min_value=1,
+            max_value=MAX_BACKDATE_HOURS * 60,
+            value=30,
+            key="backdate_minutes",
+        )
+
+        if controls[4].button("Record", key="backdate_submit"):
+            try:
+                inserted = labels.set_room_state(
+                    ROOM_SLUGS[room_label],
+                    state_type,
+                    state_value,
+                    changed_minutes_ago=changed_minutes_ago,
+                )
+                if inserted:
+                    st.success("State change recorded into history.")
+                else:
+                    st.info(
+                        f"{room_label} {STATE_TOGGLES[state_type][0].lower()} was already "
+                        f"'{state_value}' at that time — nothing to record."
+                    )
+            except ValueError as err:
+                st.error(str(err))
 
 
 

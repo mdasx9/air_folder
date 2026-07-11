@@ -180,6 +180,82 @@ class StateAsOfTests(LabelsTestCase):
         )
 
 
+class RetroactiveTests(LabelsTestCase):
+
+    def _event(self, event_id):
+        conn = sqlite3.connect(self.db)
+        row = conn.execute(
+            "SELECT start_time, end_time, logged_at FROM events WHERE id = ?", (event_id,)
+        ).fetchone()
+        conn.close()
+        return row
+
+    def test_backdated_start_and_stop(self):
+        event_id = labels.start_event(
+            "kitchen", "cooking", started_minutes_ago=30, db_path=self.db
+        )
+        labels.stop_event(event_id, ended_minutes_ago=10, db_path=self.db)
+
+        start, end, logged_at = self._event(event_id)
+        duration = pd.Timestamp(end) - pd.Timestamp(start)
+        self.assertAlmostEqual(duration.total_seconds() / 60, 20, delta=1)
+
+        # provenance: recorded now, claimed to start 30 min ago
+        lag = pd.Timestamp(logged_at) - pd.Timestamp(start)
+        self.assertAlmostEqual(lag.total_seconds() / 60, 30, delta=1)
+
+    def test_stop_before_start_is_rejected(self):
+        event_id = labels.start_event("kitchen", "cooking", db_path=self.db)
+
+        with self.assertRaises(ValueError):
+            labels.stop_event(event_id, ended_minutes_ago=10, db_path=self.db)
+
+        # event must still be open after the failed stop
+        self.assertEqual(len(labels.open_events(db_path=self.db)), 1)
+
+    def test_log_past_event(self):
+        event_id = labels.log_past_event(
+            "bedroom", "candle", started_minutes_ago=60, duration_minutes=15, db_path=self.db
+        )
+
+        start, end, logged_at = self._event(event_id)
+        self.assertIsNotNone(end)
+        duration = pd.Timestamp(end) - pd.Timestamp(start)
+        self.assertAlmostEqual(duration.total_seconds() / 60, 15, delta=1)
+
+        # closed on arrival: does not block a live event of the same type
+        labels.start_event("bedroom", "candle", db_path=self.db)
+
+    def test_past_event_cannot_end_in_future(self):
+        with self.assertRaises(ValueError):
+            labels.log_past_event(
+                "kitchen", "cooking", started_minutes_ago=10, duration_minutes=20, db_path=self.db
+            )
+
+    def test_backdate_cap(self):
+        with self.assertRaises(ValueError):
+            labels.start_event(
+                "kitchen", "cooking", started_minutes_ago=25 * 60, db_path=self.db
+            )
+
+    def test_backdated_state_dedups_against_state_at_that_time(self):
+        labels.set_room_state("kitchen", "window", "open", changed_minutes_ago=120, db_path=self.db)
+
+        # window was already open 60 minutes ago -> no new row
+        self.assertFalse(
+            labels.set_room_state("kitchen", "window", "open", changed_minutes_ago=60, db_path=self.db)
+        )
+        # a real change 30 minutes ago -> inserted
+        self.assertTrue(
+            labels.set_room_state("kitchen", "window", "closed", changed_minutes_ago=30, db_path=self.db)
+        )
+        # and the live view reflects the newest change
+        self.assertEqual(
+            labels.state_as_of("kitchen", "window", labels.server_now(), db_path=self.db),
+            "closed",
+        )
+
+
 class DatasetJoinTests(LabelsTestCase):
 
     def setUp(self):

@@ -45,6 +45,10 @@ def plot_time_series(df, metric, title=None):
     chart_data = _ensure_timestamp(df)
 
     if "node" in chart_data.columns and chart_data["node"].nunique() > 1:
+        # nodes sample on independent clocks, so raw timestamps rarely
+        # coincide across rooms; snapping to a shared grid keeps the pivot
+        # dense (NaN holes break the plotted line at every point)
+        chart_data["timestamp"] = chart_data["timestamp"].dt.floor("30s")
         wide = chart_data.pivot_table(
             index="timestamp",
             columns="node",

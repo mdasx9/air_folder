@@ -1,10 +1,10 @@
 import sqlite3
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 
-from config import DATABASE_PATH, EVENT_TYPES, ROOM_SLUGS, STATE_TYPES
+from config import DATABASE_PATH, EVENT_TYPES, MAX_BACKDATE_HOURS, ROOM_SLUGS, STATE_TYPES
 
 
 # =====================================================
@@ -25,6 +25,10 @@ class DuplicateOpenEventError(Exception):
 #
 # The partial unique index is what enforces "no two open events of the
 # same room + event_type": it only applies to rows where end_time IS NULL.
+#
+# logged_at is provenance: always the server clock at insert time. For a
+# live label it matches start_time/changed_at; for a retroactive label it
+# differs, so recalled labels can be identified and sanity-checked later.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -35,6 +39,7 @@ CREATE TABLE IF NOT EXISTS events (
     start_time TEXT NOT NULL,
     end_time TEXT,
     notes TEXT,
+    logged_at TEXT,
     CHECK (end_time IS NULL OR end_time >= start_time)
 );
 
@@ -50,7 +55,8 @@ CREATE TABLE IF NOT EXISTS room_states (
     room TEXT NOT NULL CHECK (room IN ('kitchen', 'living_room', 'bedroom')),
     state_type TEXT NOT NULL CHECK (state_type IN ('window', 'exhaust_fan', 'purifier', 'ac')),
     state_value TEXT NOT NULL CHECK (state_value IN ('open', 'closed', 'on', 'off')),
-    changed_at TEXT NOT NULL
+    changed_at TEXT NOT NULL,
+    logged_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS ix_room_states_lookup
@@ -109,13 +115,32 @@ def _normalize_timestamp(value):
 
 
 
+def _timestamp_minutes_ago(minutes):
+    """Server timestamp `minutes` in the past, bounded by the backdate cap."""
+
+    if minutes < 0:
+        raise ValueError("Minutes ago cannot be negative.")
+
+    if minutes > MAX_BACKDATE_HOURS * 60:
+        raise ValueError(
+            f"Backdating is capped at {MAX_BACKDATE_HOURS} hours — past that, "
+            "recalled times are too unreliable to use as training labels."
+        )
+
+    moment = datetime.now() - timedelta(minutes=minutes)
+
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
+
+
+
 # =====================================================
 # EVENTS
 # =====================================================
 
-def start_event(room, event_type, subtype=None, notes=None, db_path=DATABASE_PATH):
+def start_event(room, event_type, subtype=None, notes=None, started_minutes_ago=0, db_path=DATABASE_PATH):
     """
-    Open a new event (end_time = NULL) with a server-generated start time.
+    Open a new event (end_time = NULL). start_time is the server clock,
+    optionally shifted back by started_minutes_ago for events noticed late.
 
     Raises DuplicateOpenEventError if an event of the same room + type
     is already open.
@@ -126,21 +151,24 @@ def start_event(room, event_type, subtype=None, notes=None, db_path=DATABASE_PAT
     if event_type not in EVENT_TYPES:
         raise ValueError(f"Unknown event_type '{event_type}'. Expected one of {EVENT_TYPES}.")
 
+    start_time = _timestamp_minutes_ago(started_minutes_ago)
+
     conn = get_connection(db_path)
 
     try:
         with conn:
             cursor = conn.execute(
                 """
-                INSERT INTO events (room, event_type, subtype, start_time, notes)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO events (room, event_type, subtype, start_time, notes, logged_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     room,
                     event_type,
                     _clean_text(subtype),
-                    server_now(),
+                    start_time,
                     _clean_text(notes),
+                    server_now(),
                 )
             )
 
@@ -157,13 +185,72 @@ def start_event(room, event_type, subtype=None, notes=None, db_path=DATABASE_PAT
 
 
 
-def stop_event(event_id, db_path=DATABASE_PATH):
+def stop_event(event_id, ended_minutes_ago=0, db_path=DATABASE_PATH):
     """
-    Close an open event by setting end_time = now (server clock).
+    Close an open event. end_time is the server clock, optionally shifted
+    back by ended_minutes_ago for events that ended before anyone hit Stop.
 
     Returns True if an open event was closed, False if the id did not
-    match an open event.
+    match an open event. Raises ValueError if the backdated end would land
+    before the event's start.
     """
+
+    end_time = _timestamp_minutes_ago(ended_minutes_ago)
+
+    conn = get_connection(db_path)
+
+    try:
+        with conn:
+            row = conn.execute(
+                "SELECT start_time FROM events WHERE id = ? AND end_time IS NULL",
+                (event_id,)
+            ).fetchone()
+
+            if row is None:
+                return False
+
+            if end_time < row[0]:
+                raise ValueError(
+                    f"End time {end_time} is before the event started ({row[0]}). "
+                    "Reduce how many minutes ago it ended."
+                )
+
+            conn.execute(
+                "UPDATE events SET end_time = ? WHERE id = ? AND end_time IS NULL",
+                (end_time, event_id)
+            )
+
+        return True
+
+    finally:
+        conn.close()
+
+
+
+def log_past_event(room, event_type, started_minutes_ago, duration_minutes,
+                   subtype=None, notes=None, db_path=DATABASE_PATH):
+    """
+    Record a completed event entirely in the past (already closed, so the
+    open-event constraint does not apply). The event must have ended by
+    now: duration cannot exceed started_minutes_ago.
+    """
+
+    _validate_room(room)
+
+    if event_type not in EVENT_TYPES:
+        raise ValueError(f"Unknown event_type '{event_type}'. Expected one of {EVENT_TYPES}.")
+
+    if duration_minutes <= 0:
+        raise ValueError("Duration must be at least one minute.")
+
+    if duration_minutes > started_minutes_ago:
+        raise ValueError(
+            "That duration puts the end of the event in the future. "
+            "For an event that is still running, use Start event instead."
+        )
+
+    start_time = _timestamp_minutes_ago(started_minutes_ago)
+    end_time = _timestamp_minutes_ago(started_minutes_ago - duration_minutes)
 
     conn = get_connection(db_path)
 
@@ -171,14 +258,21 @@ def stop_event(event_id, db_path=DATABASE_PATH):
         with conn:
             cursor = conn.execute(
                 """
-                UPDATE events
-                SET end_time = ?
-                WHERE id = ? AND end_time IS NULL
+                INSERT INTO events (room, event_type, subtype, start_time, end_time, notes, logged_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (server_now(), event_id)
+                (
+                    room,
+                    event_type,
+                    _clean_text(subtype),
+                    start_time,
+                    end_time,
+                    _clean_text(notes),
+                    server_now(),
+                )
             )
 
-        return cursor.rowcount == 1
+        return cursor.lastrowid
 
     finally:
         conn.close()
@@ -212,7 +306,7 @@ def recent_events(limit=20, db_path=DATABASE_PATH):
 
     df = pd.read_sql_query(
         """
-        SELECT id, room, event_type, subtype, start_time, end_time, notes
+        SELECT id, room, event_type, subtype, start_time, end_time, notes, logged_at
         FROM events
         ORDER BY start_time DESC
         LIMIT ?
@@ -232,13 +326,14 @@ def recent_events(limit=20, db_path=DATABASE_PATH):
 # ROOM STATES
 # =====================================================
 
-def set_room_state(room, state_type, state_value, db_path=DATABASE_PATH):
+def set_room_state(room, state_type, state_value, changed_minutes_ago=0, db_path=DATABASE_PATH):
     """
-    Record a state change for (room, state_type).
+    Record a state change for (room, state_type), optionally backdated.
 
-    Only inserts if the value differs from the most recent recorded value
-    (or if nothing has been recorded yet). Returns True if a row was
-    inserted, False if the state was already the same.
+    Only inserts if the value differs from the state active at that
+    moment (for a live change, that is simply the latest recorded value).
+    Returns True if a row was inserted, False if the state was already
+    the same.
     """
 
     _validate_room(room)
@@ -252,30 +347,32 @@ def set_room_state(room, state_type, state_value, db_path=DATABASE_PATH):
             f"Expected one of {STATE_TYPES[state_type]}."
         )
 
+    changed_at = _timestamp_minutes_ago(changed_minutes_ago)
+
     conn = get_connection(db_path)
 
     try:
         with conn:
-            last = conn.execute(
+            active = conn.execute(
                 """
                 SELECT state_value
                 FROM room_states
-                WHERE room = ? AND state_type = ?
+                WHERE room = ? AND state_type = ? AND changed_at <= ?
                 ORDER BY changed_at DESC, id DESC
                 LIMIT 1
                 """,
-                (room, state_type)
+                (room, state_type, changed_at)
             ).fetchone()
 
-            if last is not None and last[0] == state_value:
+            if active is not None and active[0] == state_value:
                 return False
 
             conn.execute(
                 """
-                INSERT INTO room_states (room, state_type, state_value, changed_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO room_states (room, state_type, state_value, changed_at, logged_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (room, state_type, state_value, server_now())
+                (room, state_type, state_value, changed_at, server_now())
             )
 
         return True

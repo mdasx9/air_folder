@@ -38,6 +38,12 @@ STATE_TYPES = {
     "ac": ["on", "off"],
 }
 
+#how far back a retroactive label may claim to have happened.
+#recall of times degrades fast; past this window, a guessed label is
+#worse for training data than an honest gap.
+
+MAX_BACKDATE_HOURS = 24
+
 #dashboard
 
 REFRESH_SECONDS = 30
