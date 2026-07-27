@@ -79,8 +79,12 @@ def get_connection(db_path=DATABASE_PATH):
 
     conn = sqlite3.connect(
         str(db_path),
-        check_same_thread=False
+        check_same_thread=False,
+        timeout=30
     )
+
+    # never let a label write fail because the dashboard is mid-query
+    conn.execute("PRAGMA journal_mode=WAL")
 
     conn.executescript(SCHEMA)
 

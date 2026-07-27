@@ -12,10 +12,17 @@ from config import DATABASE_PATH, OFFLINE_THRESHOLD_SECONDS
 
 def get_connection():
 
-    return sqlite3.connect(
+    conn = sqlite3.connect(
         DATABASE_PATH,
-        check_same_thread=False
+        check_same_thread=False,
+        timeout=30
     )
+
+    # WAL is stored in the database file, but setting it here means the
+    # dashboard also works if it happens to open the file first
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    return conn
 
 
 # =====================================================
