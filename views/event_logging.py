@@ -2,8 +2,29 @@ import pandas as pd
 import streamlit as st
 
 import labels
-from config import EVENT_TYPES, MAX_BACKDATE_HOURS, ROOM_SLUGS, STATE_TYPES
+from config import EVENT_TYPES, MAX_BACKDATE_DAYS, MAX_BACKDATE_MINUTES, ROOM_SLUGS, STATE_TYPES
 from views.common import format_timestamp
+
+
+def _datetime_picker(container, label, key, default=None):
+    """Date + time inputs side by side, returned as one datetime."""
+
+    default = default or pd.Timestamp.now().floor("min").to_pydatetime()
+
+    picked_date = container.date_input(
+        f"{label} date",
+        value=default.date(),
+        max_value=pd.Timestamp.now().date(),
+        key=f"{key}_date",
+    )
+    picked_time = container.time_input(
+        f"{label} time",
+        value=default.time(),
+        step=60,
+        key=f"{key}_time",
+    )
+
+    return pd.Timestamp.combine(picked_date, picked_time).to_pydatetime()
 
 
 SLUG_TO_ROOM = {slug: label for label, slug in ROOM_SLUGS.items()}
@@ -50,7 +71,7 @@ def _render_status(open_df, state_lookup):
                     "Elapsed": open_df["start_time"].map(_elapsed_text),
                 }
             )
-            st.dataframe(status, use_container_width=True, hide_index=True)
+            st.dataframe(status, width="stretch", hide_index=True)
 
     with right:
         st.markdown("**Room states**")
@@ -62,7 +83,7 @@ def _render_status(open_df, state_lookup):
                 row[state_type] = state_lookup.get((slug, state_type), "unknown")
             rows.append(row)
 
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
         st.caption("'unknown' means no change has been logged yet for that room and state.")
 
 
@@ -82,7 +103,7 @@ def _render_log_event(open_df):
     started_minutes_ago = start_columns[0].number_input(
         "Started (min ago)",
         min_value=0,
-        max_value=MAX_BACKDATE_HOURS * 60,
+        max_value=MAX_BACKDATE_MINUTES,
         value=0,
         help="Leave at 0 for something starting right now; set it if you noticed late.",
     )
@@ -118,7 +139,7 @@ def _render_log_event(open_df):
             ended_minutes_ago = ended_ago.number_input(
                 "Ended (min ago)",
                 min_value=0,
-                max_value=MAX_BACKDATE_HOURS * 60,
+                max_value=MAX_BACKDATE_MINUTES,
                 value=0,
                 key=f"ended_ago_{event.id}",
             )
@@ -137,8 +158,8 @@ def _render_past_event_form():
 
     with st.expander("Log a completed past event (forgot to log it live?)", expanded=False):
         st.caption(
-            f"For events that already ended. Backdating is capped at {MAX_BACKDATE_HOURS} hours — "
-            "if you can't remember roughly when it happened, leave it unlogged rather than guessing."
+            "For events that already ended — pick the exact date and time they "
+            f"started and finished, up to {MAX_BACKDATE_DAYS} days back."
         )
 
         controls = st.columns(4)
@@ -147,33 +168,27 @@ def _render_past_event_form():
         subtype = controls[2].text_input("Subtype (optional)", key="past_subtype")
         notes = controls[3].text_input("Notes (optional)", key="past_notes")
 
-        timing = st.columns([1, 1, 2])
-        started_minutes_ago = timing[0].number_input(
-            "Started (min ago)",
-            min_value=1,
-            max_value=MAX_BACKDATE_HOURS * 60,
-            value=30,
-            key="past_started",
-        )
-        duration_minutes = timing[1].number_input(
-            "Duration (min)",
-            min_value=1,
-            max_value=MAX_BACKDATE_HOURS * 60,
-            value=15,
-            key="past_duration",
-        )
+        timing = st.columns(2)
+        default_start = (pd.Timestamp.now() - pd.Timedelta(minutes=30)).floor("min").to_pydatetime()
+        default_end = (pd.Timestamp.now() - pd.Timedelta(minutes=15)).floor("min").to_pydatetime()
 
-        if timing[2].button("Log past event"):
+        start_time = _datetime_picker(timing[0], "Started", "past_start", default_start)
+        end_time = _datetime_picker(timing[1], "Ended", "past_end", default_end)
+
+        if st.button("Log past event"):
             try:
                 labels.log_past_event(
                     ROOM_SLUGS[room_label],
                     event_type,
-                    started_minutes_ago,
-                    duration_minutes,
+                    start_time=start_time,
+                    end_time=end_time,
                     subtype=subtype,
                     notes=notes,
                 )
-                st.success("Past event recorded — it will show under Recent events below.")
+                st.success(
+                    f"Recorded {event_type} in {room_label}: "
+                    f"{format_timestamp(start_time)} to {format_timestamp(end_time)}."
+                )
             except ValueError as err:
                 st.error(str(err))
 
@@ -238,10 +253,10 @@ def _render_backdated_state_form():
         st.caption(
             "For a change that really happened a while ago — e.g. a window opened an hour "
             "ago but nobody toggled it. The correction slots into history at the time you "
-            "give, so past exports come out right."
+            f"give, so past exports come out right. Up to {MAX_BACKDATE_DAYS} days back."
         )
 
-        controls = st.columns([1, 1, 1, 1, 1])
+        controls = st.columns([1, 1, 1, 2])
         room_label = controls[0].selectbox("Room", list(ROOM_SLUGS.keys()), key="backdate_room")
         state_type = controls[1].selectbox(
             "State",
@@ -250,24 +265,26 @@ def _render_backdated_state_form():
             key="backdate_state",
         )
         state_value = controls[2].selectbox("Became", STATE_TYPES[state_type], key="backdate_value")
-        changed_minutes_ago = controls[3].number_input(
-            "Changed (min ago)",
-            min_value=1,
-            max_value=MAX_BACKDATE_HOURS * 60,
-            value=30,
-            key="backdate_minutes",
+        changed_at = _datetime_picker(
+            controls[3],
+            "Changed",
+            "backdate_changed",
+            (pd.Timestamp.now() - pd.Timedelta(minutes=30)).floor("min").to_pydatetime(),
         )
 
-        if controls[4].button("Record", key="backdate_submit"):
+        if st.button("Record", key="backdate_submit"):
             try:
                 inserted = labels.set_room_state(
                     ROOM_SLUGS[room_label],
                     state_type,
                     state_value,
-                    changed_minutes_ago=changed_minutes_ago,
+                    changed_at=changed_at,
                 )
                 if inserted:
-                    st.success("State change recorded into history.")
+                    st.success(
+                        f"Recorded: {room_label} {STATE_TOGGLES[state_type][0].lower()} "
+                        f"became '{state_value}' at {format_timestamp(changed_at)}."
+                    )
                 else:
                     st.info(
                         f"{room_label} {STATE_TOGGLES[state_type][0].lower()} was already "
@@ -289,7 +306,7 @@ def _render_recent_events():
 
         recent = recent.copy()
         recent["room"] = recent["room"].map(SLUG_TO_ROOM).fillna(recent["room"])
-        st.dataframe(recent, use_container_width=True, hide_index=True)
+        st.dataframe(recent, width="stretch", hide_index=True)
 
 
 

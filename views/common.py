@@ -30,24 +30,34 @@ def default_date_window(days=7):
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def _cached_load_data(nodes_key, hours, start_time, end_time):
+def _cached_load_data(nodes_key, hours, start_time, end_time, columns_key):
     nodes = list(nodes_key) if nodes_key else None
+    columns = list(columns_key) if columns_key else None
     return load_data(
         nodes=nodes,
         hours=hours,
         start_time=start_time,
         end_time=end_time,
+        columns=columns,
     )
 
 
-def load_filtered_data(nodes=None, time_range_label="Last 24 Hours", start_date=None, end_date=None):
+def load_filtered_data(
+    nodes=None,
+    time_range_label="Last 24 Hours",
+    start_date=None,
+    end_date=None,
+    columns=None,
+):
+    columns_key = tuple(columns) if columns else ()
+
     if time_range_label == "Custom" and start_date and end_date:
         start_time = datetime.combine(start_date, datetime.min.time()).strftime("%Y-%m-%d %H:%M:%S")
         end_time = datetime.combine(end_date, datetime.max.time()).strftime("%Y-%m-%d %H:%M:%S")
-        return _cached_load_data(tuple(nodes or []), None, start_time, end_time)
+        return _cached_load_data(tuple(nodes or []), None, start_time, end_time, columns_key)
 
     hours = time_range_hours(time_range_label)
-    return _cached_load_data(tuple(nodes or []), hours, None, None)
+    return _cached_load_data(tuple(nodes or []), hours, None, None, columns_key)
 
 
 def format_timestamp(value):

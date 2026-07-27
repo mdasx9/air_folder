@@ -62,6 +62,7 @@ def render():
     data = load_filtered_data(
         nodes=[room_a, room_b],
         time_range_label=time_range_label,
+        columns=[selected_metric],
     )
 
     if data.empty:
@@ -103,4 +104,4 @@ def render():
         )
 
     with st.expander("Aligned samples", expanded=False):
-        st.dataframe(pivot[[room_a, room_b]], use_container_width=True)
+        st.dataframe(pivot[[room_a, room_b]], width="stretch")

@@ -177,13 +177,22 @@ def summarize_events(
     df,
     metric,
     threshold,
-    gap_minutes=10
+    gap_minutes=10,
+    events=None
 ):
+
+    """
+    Group above-threshold rows into event windows.
+
+    Pass `events` (the result of detect_events) when the caller has
+    already computed it, so the threshold scan is not repeated.
+    """
 
     if df.empty:
         return pd.DataFrame()
 
-    events = detect_events(df, metric, threshold)
+    if events is None:
+        events = detect_events(df, metric, threshold)
 
     if events.empty:
         return pd.DataFrame()

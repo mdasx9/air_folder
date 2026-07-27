@@ -232,11 +232,79 @@ class RetroactiveTests(LabelsTestCase):
                 "kitchen", "cooking", started_minutes_ago=10, duration_minutes=20, db_path=self.db
             )
 
-    def test_backdate_cap(self):
+    def test_backdate_beyond_a_day_is_allowed(self):
+        # 1440 minutes used to be the hard ceiling
+        event_id = labels.start_event(
+            "kitchen", "cooking", started_minutes_ago=3 * 24 * 60, db_path=self.db
+        )
+        start, _, _ = self._event(event_id)
+        age = pd.Timestamp(labels.server_now()) - pd.Timestamp(start)
+        self.assertAlmostEqual(age.total_seconds() / 3600, 72, delta=1)
+
+    def test_backdate_cap_still_rejects_absurd_dates(self):
         with self.assertRaises(ValueError):
             labels.start_event(
-                "kitchen", "cooking", started_minutes_ago=25 * 60, db_path=self.db
+                "kitchen", "cooking", started_minutes_ago=200 * 24 * 60, db_path=self.db
             )
+
+    def test_explicit_datetimes_for_past_event(self):
+        yesterday = pd.Timestamp.now().floor("min") - pd.Timedelta(days=1)
+
+        event_id = labels.log_past_event(
+            "living_room",
+            "cleaning",
+            start_time=yesterday,
+            end_time=yesterday + pd.Timedelta(minutes=40),
+            subtype="vacuum",
+            db_path=self.db,
+        )
+
+        start, end, _ = self._event(event_id)
+        self.assertEqual(start, yesterday.strftime("%Y-%m-%d %H:%M:%S"))
+        duration = pd.Timestamp(end) - pd.Timestamp(start)
+        self.assertEqual(duration, pd.Timedelta(minutes=40))
+
+    def test_future_timestamps_are_rejected(self):
+        future = pd.Timestamp.now() + pd.Timedelta(hours=2)
+
+        with self.assertRaises(ValueError):
+            labels.start_event("kitchen", "cooking", start_time=future, db_path=self.db)
+
+        with self.assertRaises(ValueError):
+            labels.set_room_state("kitchen", "window", "open", changed_at=future, db_path=self.db)
+
+    def test_past_event_end_must_follow_start(self):
+        moment = pd.Timestamp.now().floor("min") - pd.Timedelta(hours=3)
+
+        with self.assertRaises(ValueError):
+            labels.log_past_event(
+                "kitchen",
+                "cooking",
+                start_time=moment,
+                end_time=moment - pd.Timedelta(minutes=10),
+                db_path=self.db,
+            )
+
+    def test_explicit_datetime_for_state_change(self):
+        moment = pd.Timestamp.now().floor("min") - pd.Timedelta(days=2)
+
+        self.assertTrue(
+            labels.set_room_state(
+                "bedroom", "window", "open", changed_at=moment, db_path=self.db
+            )
+        )
+        self.assertEqual(
+            labels.state_as_of(
+                "bedroom", "window", moment + pd.Timedelta(hours=1), db_path=self.db
+            ),
+            "open",
+        )
+        # still unknown before that moment
+        self.assertIsNone(
+            labels.state_as_of(
+                "bedroom", "window", moment - pd.Timedelta(hours=1), db_path=self.db
+            )
+        )
 
     def test_backdated_state_dedups_against_state_at_that_time(self):
         labels.set_room_state("kitchen", "window", "open", changed_minutes_ago=120, db_path=self.db)

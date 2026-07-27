@@ -39,10 +39,13 @@ STATE_TYPES = {
 }
 
 #how far back a retroactive label may claim to have happened.
-#recall of times degrades fast; past this window, a guessed label is
-#worse for training data than an honest gap.
+#labels can be entered as "minutes ago" for something recent, or as an
+#explicit date and time for anything older. logged_at records when the
+#entry was actually made, so recalled labels stay identifiable.
 
-MAX_BACKDATE_HOURS = 24
+MAX_BACKDATE_DAYS = 90
+
+MAX_BACKDATE_MINUTES = MAX_BACKDATE_DAYS * 24 * 60
 
 #dashboard
 

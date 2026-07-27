@@ -31,6 +31,7 @@ def render():
     data = load_filtered_data(
         nodes=selected_rooms or None,
         time_range_label=time_range_label,
+        columns=[selected_metric],
     )
 
     if data.empty:
@@ -49,12 +50,12 @@ def render():
 
     with st.expander("Daily averages", expanded=False):
         if len(sampled) > 1:
-            st.dataframe(daily_average(sampled), use_container_width=True)
+            st.dataframe(daily_average(sampled), width="stretch")
         else:
             st.info("Not enough data to compute a daily average.")
 
     with st.expander("Filtered rows", expanded=False):
         st.dataframe(
             sampled[["timestamp", "node", selected_metric]] if "node" in sampled.columns else sampled[["timestamp", selected_metric]],
-            use_container_width=True,
+            width="stretch",
         )

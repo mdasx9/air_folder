@@ -43,7 +43,7 @@ def render():
     summary_columns[1].metric("Rooms", export_df["node"].nunique() if "node" in export_df.columns else 0)
     summary_columns[2].metric("Columns", len(export_df.columns))
 
-    st.dataframe(export_df.head(200), use_container_width=True)
+    st.dataframe(export_df.head(200), width="stretch")
 
     file_name = f"air_quality_export_{time_range_label.replace(' ', '_').lower()}.csv"
     st.download_button(
@@ -100,7 +100,7 @@ def _render_labeled_export():
     summary[1].metric("Event-labeled rows", int(event_rows.sum()))
     summary[2].metric("Background rows", int((~event_rows).sum()))
 
-    st.dataframe(labeled.head(200), use_container_width=True)
+    st.dataframe(labeled.head(200), width="stretch")
 
     st.download_button(
         "Download labeled CSV",

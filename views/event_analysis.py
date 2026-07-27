@@ -6,6 +6,10 @@ from plotting import plot_threshold_overlay
 from views.common import load_filtered_data, metric_column, metric_labels, room_list
 
 
+# rendering tens of thousands of rows into a table is the slowest thing
+# this page can do, and nobody scrolls past the first few hundred
+MAX_TABLE_ROWS = 500
+
 DEFAULT_THRESHOLDS = {
     "pm1": 15.0,
     "pm25": 35.0,
@@ -41,16 +45,19 @@ def render():
 
     for room in selected_rooms:
         st.subheader(room)
-        data = load_filtered_data(
+
+        # only the metric under inspection is needed; pulling all nine
+        # channels roughly doubles the query cost for no benefit
+        room_data = load_filtered_data(
             nodes=[room],
             time_range_label=time_range_label,
+            columns=[selected_metric],
         )
 
-        if data.empty:
+        if room_data.empty:
             st.info("No data available for this room and time range.")
             continue
 
-        room_data = data[["timestamp", "node", selected_metric]].copy()
         plot_threshold_overlay(
             room_data,
             selected_metric,
@@ -58,8 +65,15 @@ def render():
             title=f"{room} - {selected_metric_label}",
         )
 
+        # detection runs on the full-resolution data (the chart thins
+        # points for display only, so peaks are never averaged away here)
         exceedances = detect_events(room_data, selected_metric, threshold)
-        event_windows = summarize_events(room_data, selected_metric, threshold)
+        event_windows = summarize_events(
+            room_data,
+            selected_metric,
+            threshold,
+            events=exceedances,
+        )
 
         col_a, col_b = st.columns(2)
         col_a.metric("Threshold exceedances", len(exceedances))
@@ -69,7 +83,12 @@ def render():
             st.info("No event windows crossed the selected threshold.")
             continue
 
-        st.dataframe(event_windows, use_container_width=True)
+        st.dataframe(event_windows, width="stretch")
 
         with st.expander("Rows above threshold", expanded=False):
-            st.dataframe(exceedances, use_container_width=True)
+            st.dataframe(exceedances.head(MAX_TABLE_ROWS), width="stretch")
+            if len(exceedances) > MAX_TABLE_ROWS:
+                st.caption(
+                    f"Showing the first {MAX_TABLE_ROWS:,} of {len(exceedances):,} rows. "
+                    "Use Data Export for the complete set."
+                )

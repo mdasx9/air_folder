@@ -88,13 +88,25 @@ def load_data(
     nodes=None,
     hours=None,
     start_time=None,
-    end_time=None
+    end_time=None,
+    columns=None
 ):
 
     conn = get_connection()
 
-    query = """
-    SELECT *
+    # pulling only the needed columns roughly halves load time on large
+    # ranges; columns=None keeps the original "everything" behaviour
+    if columns:
+        requested = ["timestamp", "node"] + [
+            column for column in columns
+            if column not in ("timestamp", "node")
+        ]
+        selection = ", ".join(requested)
+    else:
+        selection = "*"
+
+    query = f"""
+    SELECT {selection}
     FROM sensor_data
     WHERE 1=1
     """
