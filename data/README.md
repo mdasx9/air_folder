@@ -10,7 +10,7 @@ small, anonymised, self-contained sample instead.
 | `sample/sample_readings.csv` | Raw readings — 4 h, three rooms |
 | `sample/sample_events.csv` | Two overlapping labelled cooking events |
 | `sample/sample_room_states.csv` | Room-condition change history |
-| `sample/sample_labeled_dataset.csv` | The joined long-format table the classifier consumes |
+| `sample/sample_labeled_dataset.csv` | The joined long-format table the airflow analysis consumes |
 
 Regenerate from the live database with:
 

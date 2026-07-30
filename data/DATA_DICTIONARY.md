@@ -2,7 +2,7 @@
 
 Every field produced by this project, in the order a reader meets them:
 raw sensor readings, the two labelling tables, and the joined dataset the
-classifier consumes.
+airflow analysis consumes.
 
 All timestamps are **server-generated** and stored as text in
 `YYYY-MM-DD HH:MM:SS` (local time, no timezone suffix). Nodes do not send
@@ -93,13 +93,17 @@ assumed to be a default. Treat `NULL` as missing data, not as "closed".
 
 ---
 
-## 4. `sample_labeled_dataset.csv` — the joined training table
+## 4. `sample_labeled_dataset.csv` — the joined analysis table
 
 Produced by `build_labeled_dataset(start, end, buffer_minutes)`. Tidy long
 format: **one row per room per timestamp per overlapping event**. Rooms are
-deliberately *not* pivoted into columns — that happens downstream in
-feature extraction, where the shape differs for classification
-(source-room only) versus transport analysis (all rooms).
+deliberately *not* pivoted into columns — that happens downstream, and the
+shape differs depending on the question (a single room's response versus
+all three rooms aligned for transport comparison).
+
+This is the table the airflow analysis in `transport.py` consumes: the
+`role` column is what separates the room an event started in from the
+rooms the air travelled to.
 
 | Column | Notes |
 |---|---|
@@ -115,9 +119,9 @@ feature extraction, where the shape differs for classification
 Three behaviours worth knowing before modelling:
 
 1. **Background rows are kept on purpose.** A reading with no overlapping
-   event is returned with an empty `event_type`. These are the negative
-   examples; dropping them would leave a classifier that has never seen
-   ordinary air.
+   event is returned with an empty `event_type`. These define the quiet
+   baseline that every rise is measured against; dropping them would leave
+   no reference for what the room looks like when nothing is happening.
 2. **Buffered windows.** Each event contributes readings from
    `[start − buffer, end + buffer]`, so pre-event baseline and
    post-event decay are captured. The sample uses ±10 minutes.

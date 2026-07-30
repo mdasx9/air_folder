@@ -1,25 +1,25 @@
-# Indoor Air Quality Source-Event Classification
+# Indoor Airflow and Pollutant Transport Tracking
 
 A three-room indoor air quality monitoring network built around a custom
 ESP32 + Sensirion SEN66 PCB, with a labelling and analysis platform for
 answering one question:
 
-> **Can a single low-cost multi-channel sensor identify not just *that* air
-> quality changed, but *what caused it* — cooking, cleaning, a candle, or
-> people entering a room?**
+> **When a pollution event happens in one room, how does that air actually
+> move through the home — how long does it take to reach the other rooms,
+> how much of it survives the journey, and how quickly does it clear?**
 
-Most consumer monitors report a number and stop there. This project treats
-the SEN66's nine channels as a signature and asks which of them actually
-carry source information — measured by channel-ablation experiments
-(removing and permuting each channel to watch classification accuracy
-move), cross-checked against SHAP values. A second question follows from
-the three-node layout: how does an event in one room propagate to the
-others, and what does that say about transport and ventilation?
+Most consumer monitors report a number for the room they sit in. With
+three synchronised nodes and a log of when events actually happened, each
+event becomes a **tracer release** into a known floor plan: the same
+kitchen plume is measured simultaneously in three rooms against a single
+server clock. Repeated events then give repeated measurements of the same
+transport path, which is what makes lag, attenuation, and clearance
+measurable rather than anecdotal.
 
-**Status:** hardware and data pipeline complete and collecting; labelled
-dataset accumulating; classifier and results in progress. Research
-findings are being prepared for journal submission and are not published
-here yet.
+**Status:** hardware and pipeline complete and collecting; transport
+analysis implemented and validated on real events (see
+[Method validation](#method-validation)); results being prepared for
+journal submission and not published here yet.
 
 ---
 
@@ -31,6 +31,7 @@ here yet.
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
 - [Data and methods](#data-and-methods)
+- [Method validation](#method-validation)
 - [Design decisions worth knowing](#design-decisions-worth-knowing)
 - [License](#license)
 
@@ -41,7 +42,8 @@ here yet.
 Three identical sensor nodes push readings over WiFi to a local Flask
 server, which timestamps and stores them in SQLite. A Streamlit dashboard
 reads the same database — for live monitoring, for recording ground-truth
-labels, and for exporting the joined dataset that feeds the classifier.
+labels, and for exporting the joined dataset that feeds the transport
+analysis.
 
 ```mermaid
 flowchart LR
@@ -60,7 +62,7 @@ flowchart LR
     D --> S["Streamlit dashboard<br/>dashboard.py"]
     S -->|"events + room states"| D
     D --> X["Labelled export<br/>dataset.py"]
-    X --> M["Feature extraction<br/>+ classifier"]
+    X --> M["Transport analysis<br/>transport.py"]
 
     style D fill:#2b6cb0,color:#fff
     style S fill:#2f855a,color:#fff
@@ -104,7 +106,7 @@ anything noticed late.
 
 ### Analysis and export
 Threshold-based event detection, cross-room comparison with lag estimation,
-and the labelled dataset export that feeds the classifier.
+and the labelled dataset export that feeds the transport analysis.
 
 ![Analysis and export](docs/screenshots/analysis-export.png)
 
@@ -145,10 +147,11 @@ NOx Index, CO₂ equivalent, temperature, relative humidity.
 > [`hardware/photos/`](hardware/photos/).
 
 **Firmware** is in [`firmware/esp32_node/`](firmware/esp32_node/). Each
-node is flashed with the same sketch, with `NODE_ID`, `NODE_NAME`, WiFi
-credentials, and the server address set per board. Sampling is every 5 s;
-Sensirion's recommended temperature-offset compensation is applied
-on-device.
+node is flashed with the same sketch, with `NODE_ID` and `NODE_NAME` set
+per board. WiFi credentials and the server address go in `secrets.h` —
+copy `secrets.h.example` and fill it in; it is git-ignored, so credentials
+never reach the repository. Sampling is every 5 s; Sensirion's recommended
+temperature-offset compensation is applied on-device.
 
 ### Room layout
 
@@ -168,7 +171,8 @@ is possible and is the anchor figure for the paper.
 ├── config.py                 Rooms, metrics, event types, state types
 ├── database.py               Sensor-data queries
 ├── labels.py                 Event + room-state schema and logic
-├── dataset.py                The labelled export/join for the classifier
+├── dataset.py                Labelled export: readings joined to events and states
+├── transport.py              Airflow analysis: arrival lag, attenuation, clearance
 ├── metrics.py                Downsampling, statistics, threshold detection
 ├── plotting.py               Altair charts with hover inspection
 ├── views/                    One module per dashboard page
@@ -242,14 +246,74 @@ sensor reading to any overlapping event, tags it `source` or `transport`
 depending on whether it is the event's own room, and attaches the
 conditions active in that room at that moment via an as-of join.
 
-**Planned analysis.** Windowed feature extraction over the labelled
-dataset, then interpretable classifiers (Random Forest / Gradient
-Boosting), validated with **leave-one-day-out** cross-validation — not
-random k-fold, because readings within a day are strongly correlated and
-random splits would leak. The headline experiment is channel ablation:
-drop or permute each sensor channel and measure the accuracy cost, to
-establish which channels genuinely carry source information rather than
-which merely correlate with it.
+**Transport metrics.** [`transport.py`](transport.py) turns each event
+into one row per room:
+
+| Metric | Meaning |
+|---|---|
+| `arrival_lag_min` | Minutes between the level rising clear of baseline in the source room and doing so here — *how long the air took to arrive* |
+| `xcorr_lag_min` | Independent lag estimate from baseline-subtracted cross-correlation of the whole curve |
+| `peak_lag_min` | Lag between peak times (kept for comparison; noisier than arrival) |
+| `attenuation` | This room's rise ÷ the source room's rise — *how much survived the trip* |
+| `clearance_min` | Time from peak to falling halfway back to baseline — *how fast the room recovers* |
+| `snr`, `detected` | Whether the event was measurably present here at all |
+
+Arrival is defined as the level crossing `baseline + 3σ` **and staying
+there** for two minutes. The persistence requirement is not cosmetic: over
+the ~1,000 samples in an event window, the largest value of pure noise
+clears 3σ by chance often enough that a peak-only test reports flat rooms
+as detections.
+
+Where an event was not detected in a room, lag and attenuation are
+reported as missing rather than computed — a ratio of noise to signal
+would look like a measurement without being one.
+
+---
+
+## Method validation
+
+Run against the events logged so far — 18 closed events, almost all
+cooking in the kitchen — using PM2.5. These are method-validation numbers
+on a small sample, not published findings.
+
+**The signal does travel, and it is measurable.** The event was detected
+in the living room in 83% of events and the bedroom in 78%, with median
+arrival lags of about 5 minutes to each.
+
+**Event strength controls how trustworthy a lag is.** Stratifying by
+source-room signal-to-noise:
+
+| Source SNR | n | Median arrival lag | IQR | Physically sensible (lag > 0) |
+|---|---|---|---|---|
+| weak (< 25) | 15 | 8.1 min | 18.9 min | 67% |
+| medium (25–100) | 4 | 2.0 min | 7.6 min | 50% |
+| strong (≥ 100) | 8 | 3.3 min | **5.1 min** | **88%** |
+
+Weak events produce lags scattered across a 19-minute spread, a third of
+them pointing the wrong way in time. Strong events tighten to a 5-minute
+spread with 88% in the physically sensible direction. The practical
+conclusion is that transport analysis should be restricted to events that
+clear an SNR floor, and that deliberately staging strong events is worth
+more than accumulating weak ones.
+
+**An open question in the data.** The living room frequently registers a
+*larger* PM2.5 rise than the kitchen where the cooking happened — median
+attenuation 1.44, above 1 in most events. Air does not gain particles in
+transit, so this points at something in the setup rather than the
+atmosphere: most likely kitchen node placement (a plume rising past the
+sensor, or a local draught clearing it), possibly unit-to-unit calibration
+differences. **It needs resolving before any attenuation figure is
+reported as a result**, since the kitchen node is the reference every
+attenuation is measured against. The bedroom, by contrast, behaves as
+expected (median 0.87).
+
+Reproduce with:
+
+```python
+from transport import event_transport_metrics, transport_summary
+metrics = event_transport_metrics(metric="pm25")
+print(transport_summary(metrics))
+```
 
 ---
 
@@ -261,8 +325,11 @@ each:
 - **Server-generated timestamps only.** One clock for readings and labels;
   no cross-device drift in the lag measurements.
 - **Background rows are kept.** Readings with no event are exported with an
-  empty `event_type` rather than dropped — they are the negative class a
-  classifier needs to learn what ordinary air looks like.
+  empty `event_type` rather than dropped — they are what "ordinary air"
+  looks like, and the baseline every rise is measured against.
+- **Missing beats fabricated.** Lag and attenuation are reported only when
+  the event was actually detected at both ends; otherwise they come back
+  empty rather than as a number computed from noise.
 - **Unknown is not a default.** Before a room's first recorded state
   change, its window/fan/purifier/AC state is exported as `NULL`, never
   assumed. A wrong assumption is worse than an honest gap.
