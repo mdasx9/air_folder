@@ -1,0 +1,4 @@
+reference,quantity,component,value,package,manufacturer,manufacturer_part_number,supplier,supplier_part_number,unit_price,notes
+U1,1,ESP32 module,,,,,,,,WiFi MCU
+U2,1,Sensirion SEN66,,,Sensirion,SEN66,,,,"PM1/2.5/4/10, VOC, NOx, CO2eq, T, RH"
+,,,,,,,,,,

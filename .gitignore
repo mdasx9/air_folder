@@ -10,11 +10,16 @@ __pycache__/
 *.db-wal
 *.db-shm
 
-# Data exports
+# Data exports (ad-hoc CSVs from the dashboard stay local)
 *.csv
+
+# ...but the published sample dataset and the BOM are part of the project
+!data/sample/*.csv
+!hardware/bom/*.csv
 
 # Secrets
 .env
+secrets.h
 
 # IDE
 .vscode/
