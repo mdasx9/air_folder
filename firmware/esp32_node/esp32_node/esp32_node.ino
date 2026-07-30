@@ -5,6 +5,11 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
+// WiFi credentials and the server address live in secrets.h, which is
+// git-ignored so they are never committed. Copy secrets.h.example to
+// secrets.h and fill in your own values before building.
+#include "secrets.h"
+
 //==================================================
 // USER CONFIGURATION
 //==================================================
@@ -13,12 +18,12 @@
 const int NODE_ID = 3;
 const char* NODE_NAME = "Bedroom";
 
-// ---------- WiFi ----------
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+// ---------- WiFi (from secrets.h) ----------
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
-// ---------- Flask Server ----------
-const char* serverName = "http://YOUR_SERVER_IP:5000/data";
+// ---------- Flask Server (from secrets.h) ----------
+const char* serverName = SERVER_URL;
 
 // ---------- Sampling ----------
 const unsigned long SAMPLE_PERIOD = 5000;   // milliseconds
